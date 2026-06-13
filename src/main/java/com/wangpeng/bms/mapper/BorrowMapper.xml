@@ -143,4 +143,15 @@
     where userId = #{userid}
     limit #{begin}, #{size}
   </select>
+  <update id="updateReturnTimeCas">
+    update borrow
+    set returnTime = #{returntime,jdbcType=TIMESTAMP}
+    where borrowId = #{borrowid,jdbcType=INTEGER}
+      and returnTime is null
+  </update>
+  <select id="selectActiveBorrowCount" resultType="int">
+    select count(*) from borrow
+    where userId = #{userid,jdbcType=INTEGER}
+      and returnTime is null
+  </select>
 </mapper>

@@ -26,6 +26,9 @@ import java.util.Map;
 @RequestMapping(value = "/reservation")
 public class ReservationController {
 
+    /** 每位读者最多同时借阅数量 */
+    private static final int MAX_BORROW_LIMIT = 5;
+
     @Autowired
     ReservationService reservationService;
     @Autowired
@@ -116,6 +119,7 @@ public class ReservationController {
     /**
      * 借书（增强版，支持预约保留检查）
      * 替代 /borrow/borrowBook，识别保留名额
+     * 使用CAS更新防止并发双借
      */
     @RequestMapping(value = {"/borrowBook", "/reader/borrowBook"})
     @Transactional
@@ -126,6 +130,15 @@ public class ReservationController {
             if (theBook == null) {
                 throw new NullPointerException("图书" + bookid + "不存在");
             }
+
+            // 检查读者借阅上限
+            int activeCount = borrowService.getActiveBorrowCount(userid);
+            if (activeCount >= MAX_BORROW_LIMIT) {
+                throw new NotEnoughException("您当前借阅数量已达上限（" + MAX_BORROW_LIMIT + "本）");
+            }
+
+            // 记录原始状态，用于CAS更新
+            Byte originalStatus = theBook.getIsborrowed();
 
             // 查询该书是否有活跃保留
             Reservation activeReservation = reservationService.getActiveReservation(bookid, null);
@@ -169,12 +182,11 @@ public class ReservationController {
                 reservationService.consumeReservation(myReservation.getReservationid());
             }
 
-            // 更新图书 isBorrowed = 1
-            BookInfo bookInfo = new BookInfo();
-            bookInfo.setBookid(bookid);
-            bookInfo.setIsborrowed((byte) 1);
-            Integer res2 = bookInfoService.updateBookInfo(bookInfo);
-            if (res2 == 0) throw new OperationFailureException("图书" + bookid + "更新被借信息失败");
+            // CAS更新图书状态：从原始状态→1（原子操作，防止并发双借）
+            int casResult = bookInfoService.casUpdateIsBorrowed(bookid, originalStatus, (byte) 1);
+            if (casResult == 0) {
+                throw new NotEnoughException("图书" + bookid + "状态已变更，请重试");
+            }
 
             // 添加借阅记录
             Borrow borrow = new Borrow();
@@ -200,44 +212,44 @@ public class ReservationController {
     /**
      * 还书（增强版，触发预约保留）
      * 替代 /borrow/returnBook，还书后自动检查预约队列
+     * 使用CAS归还防止重复还书导致库存重复加回
      */
     @RequestMapping(value = {"/returnBook", "/reader/returnBook"})
     @Transactional
     public Integer returnBook(Integer borrowid, Integer bookid) {
         try {
             BookInfo theBook = bookInfoService.queryBookInfoById(bookid);
-            Borrow theBorrow = borrowService.queryBorrowsById(borrowid);
-
             if (theBook == null) {
                 throw new NullPointerException("图书" + bookid + "不存在");
-            } else if (theBorrow == null) {
-                throw new NullPointerException("借书记录" + borrowid + "不存在");
-            } else if (theBorrow.getReturntime() != null) {
-                throw new NotEnoughException("图书" + bookid + "已经还过了");
             }
 
-            // 更新 Borrow 还书时间
-            Borrow borrow = new Borrow();
-            borrow.setBorrowid(borrowid);
-            borrow.setReturntime(new Date(System.currentTimeMillis()));
-            Integer res1 = borrowService.updateBorrow2(borrow);
-            if (res1 == 0) throw new OperationFailureException("图书" + bookid + "更新借阅记录失败");
+            Borrow theBorrow = borrowService.queryBorrowsById(borrowid);
+            if (theBorrow == null) {
+                throw new NullPointerException("借书记录" + borrowid + "不存在");
+            }
 
-            // 检查预约队列
+            // CAS归还：仅当returnTime为NULL时才设置归还时间（幂等保护）
+            int casResult = borrowService.returnBorrowCas(borrowid);
+            if (casResult == 0) {
+                // 已经还过了，幂等返回成功
+                return 1;
+            }
+
+            // CAS归还成功，检查预约队列
             Reservation triggered = reservationService.triggerReservation(bookid);
 
             if (triggered != null) {
-                // 有人排队 → 设为保留状态（isBorrowed=2），等待预约人来取
-                BookInfo bookInfo = new BookInfo();
-                bookInfo.setBookid(bookid);
-                bookInfo.setIsborrowed((byte) 2);
-                bookInfoService.updateBookInfo(bookInfo);
+                // 有人排队 → 设为保留状态（isBorrowed: 1→2），等待预约人来取
+                int bookCas = bookInfoService.casUpdateIsBorrowed(bookid, (byte) 1, (byte) 2);
+                if (bookCas == 0) {
+                    throw new OperationFailureException("图书" + bookid + "更新库存状态失败");
+                }
             } else {
-                // 无人排队 → 正常归还
-                BookInfo bookInfo = new BookInfo();
-                bookInfo.setBookid(bookid);
-                bookInfo.setIsborrowed((byte) 0);
-                bookInfoService.updateBookInfo(bookInfo);
+                // 无人排队 → 正常归还（isBorrowed: 1→0）
+                int bookCas = bookInfoService.casUpdateIsBorrowed(bookid, (byte) 1, (byte) 0);
+                if (bookCas == 0) {
+                    throw new OperationFailureException("图书" + bookid + "更新库存状态失败");
+                }
             }
 
         } catch (Exception e) {

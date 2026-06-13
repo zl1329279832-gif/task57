@@ -32,4 +32,12 @@ public interface BookInfoMapper {
     int selectCountByType(Map<String, Object> map);
 
     List<BookInfo> selectByType(Map<String, Object> map);
+
+    /**
+     * CAS更新isBorrowed：仅当当前值等于expectedStatus时才更新为newStatus
+     * @return 受影响行数，0表示状态已被其他事务修改（并发竞争失败）
+     */
+    int updateIsBorrowedCas(@Param("bookid") Integer bookid,
+                            @Param("expectedStatus") Byte expectedStatus,
+                            @Param("newStatus") Byte newStatus);
 }

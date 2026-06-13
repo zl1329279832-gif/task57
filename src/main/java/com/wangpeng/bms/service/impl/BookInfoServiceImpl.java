@@ -70,4 +70,9 @@ public class BookInfoServiceImpl implements BookInfoService {
         return bookInfoMapper.updateByPrimaryKeySelective(bookInfo);
     }
 
+    @Override
+    public int casUpdateIsBorrowed(Integer bookid, Byte expectedStatus, Byte newStatus) {
+        return bookInfoMapper.updateIsBorrowedCas(bookid, expectedStatus, newStatus);
+    }
+
 }

@@ -99,4 +99,26 @@ public class BorrowServiceImpl implements BorrowService {
         return borrowMapper.selectByPrimaryKey(borrowid);
     }
 
+    @Override
+    public int returnBorrowCas(Integer borrowid) {
+        return borrowMapper.updateReturnTimeCas(borrowid, new java.util.Date(System.currentTimeMillis()));
+    }
+
+    @Override
+    public int getActiveBorrowCount(Integer userid) {
+        return borrowMapper.selectActiveBorrowCount(userid);
+    }
+
+    @Override
+    public int renewBorrow(Integer borrowid) {
+        Borrow borrow = borrowMapper.selectByPrimaryKey(borrowid);
+        if (borrow == null || borrow.getReturntime() != null) {
+            return 0;
+        }
+        Borrow update = new Borrow();
+        update.setBorrowid(borrowid);
+        update.setBorrowtime(new java.util.Date(System.currentTimeMillis()));
+        return borrowMapper.updateByPrimaryKeySelective(update);
+    }
+
 }

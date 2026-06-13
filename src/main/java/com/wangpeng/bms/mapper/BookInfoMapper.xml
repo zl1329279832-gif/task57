@@ -190,5 +190,11 @@
     </where>
     limit #{begin}, #{size}
   </select>
+  <update id="updateIsBorrowedCas">
+    update book_info
+    set isBorrowed = #{newStatus,jdbcType=TINYINT}
+    where bookId = #{bookid,jdbcType=INTEGER}
+      and isBorrowed = #{expectedStatus,jdbcType=TINYINT}
+  </update>
 </mapper>
 

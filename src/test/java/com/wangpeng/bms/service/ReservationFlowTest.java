@@ -133,14 +133,15 @@ class ReservationFlowTest {
 
         when(bookInfoService.queryBookInfoById(200)).thenReturn(borrowedBook);
         when(borrowService.queryBorrowsById(1)).thenReturn(makeBorrow(1, 100, 200));
-        when(borrowService.updateBorrow2(any())).thenReturn(1);
+        when(borrowService.returnBorrowCas(1)).thenReturn(1);
         when(reservationService.triggerReservation(200)).thenReturn(triggered);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
+        when(bookInfoService.casUpdateIsBorrowed(200, (byte) 1, (byte) 2)).thenReturn(1);
 
         Integer result = reservationController.returnBook(1, 200);
 
         assertEquals(1, result);
         verify(reservationService).triggerReservation(200);
+        verify(bookInfoService).casUpdateIsBorrowed(200, (byte) 1, (byte) 2);
     }
 
     @Test
@@ -148,13 +149,28 @@ class ReservationFlowTest {
     void returnBook_noQueue_normalReturn() {
         when(bookInfoService.queryBookInfoById(200)).thenReturn(borrowedBook);
         when(borrowService.queryBorrowsById(1)).thenReturn(makeBorrow(1, 100, 200));
-        when(borrowService.updateBorrow2(any())).thenReturn(1);
+        when(borrowService.returnBorrowCas(1)).thenReturn(1);
         when(reservationService.triggerReservation(200)).thenReturn(null);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
+        when(bookInfoService.casUpdateIsBorrowed(200, (byte) 1, (byte) 0)).thenReturn(1);
 
         Integer result = reservationController.returnBook(1, 200);
 
         assertEquals(1, result);
+        verify(bookInfoService).casUpdateIsBorrowed(200, (byte) 1, (byte) 0);
+    }
+
+    @Test
+    @DisplayName("还书幂等 - 重复归还返回成功但不重复操作")
+    void returnBook_duplicate_idempotent() {
+        when(bookInfoService.queryBookInfoById(200)).thenReturn(borrowedBook);
+        when(borrowService.queryBorrowsById(1)).thenReturn(makeBorrow(1, 100, 200));
+        when(borrowService.returnBorrowCas(1)).thenReturn(0);
+
+        Integer result = reservationController.returnBook(1, 200);
+
+        assertEquals(1, result);
+        verify(reservationService, never()).triggerReservation(anyInt());
+        verify(bookInfoService, never()).casUpdateIsBorrowed(anyInt(), anyByte(), anyByte());
     }
 
     // ========================= 4. 过期顺延 =========================
@@ -169,12 +185,11 @@ class ReservationFlowTest {
         next.setExpirytime(new Date(System.currentTimeMillis() + 72 * 3600 * 1000));
 
         when(bookInfoService.queryBookInfoById(200)).thenReturn(availableBook);
-        // 链式返回：第一次调用返回 expired，第二次（顺延后）返回 next
+        when(borrowService.getActiveBorrowCount(999)).thenReturn(0);
         when(reservationService.getActiveReservation(eq(200), isNull()))
                 .thenReturn(expired, next);
         when(reservationService.expireAndAdvance(1)).thenReturn(next);
 
-        // 非保留人(999)尝试借书 → 被拒绝
         Integer result = reservationController.borrowBook(999, 200);
 
         assertEquals(0, result);
@@ -187,17 +202,15 @@ class ReservationFlowTest {
         Reservation res1Expired = makeReservation(1, 100, 200, Reservation.STATUS_RESERVED, 1);
         res1Expired.setExpirytime(new Date(System.currentTimeMillis() - 1000));
 
-        // 书可借（刚还回），但保留记录过期
         when(bookInfoService.queryBookInfoById(200)).thenReturn(availableBook);
-        // 第一次调用返回过期保留，第二次（顺延后）返回 null
+        when(borrowService.getActiveBorrowCount(999)).thenReturn(0);
         when(reservationService.getActiveReservation(eq(200), isNull()))
                 .thenReturn(res1Expired, (Reservation) null);
         when(reservationService.expireAndAdvance(1)).thenReturn(null);
 
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
+        when(bookInfoService.casUpdateIsBorrowed(200, (byte) 0, (byte) 1)).thenReturn(1);
         when(borrowService.addBorrow2(any())).thenReturn(1);
 
-        // 非保留人(999)借书 → res1 过期 → 顺延（无人） → 书可借 → 999 借走
         Integer result = reservationController.borrowBook(999, 200);
 
         assertEquals(1, result);
@@ -213,10 +226,11 @@ class ReservationFlowTest {
         reservation.setExpirytime(new Date(System.currentTimeMillis() + 72 * 3600 * 1000));
 
         when(bookInfoService.queryBookInfoById(200)).thenReturn(reservedBook);
+        when(borrowService.getActiveBorrowCount(100)).thenReturn(0);
         when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(reservation);
         when(reservationService.getActiveReservation(200, 100)).thenReturn(reservation);
         when(reservationService.consumeReservation(1)).thenReturn(1);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
+        when(bookInfoService.casUpdateIsBorrowed(200, (byte) 2, (byte) 1)).thenReturn(1);
         when(borrowService.addBorrow2(any())).thenReturn(1);
 
         Integer result = reservationController.borrowBook(100, 200);
@@ -229,6 +243,7 @@ class ReservationFlowTest {
     @DisplayName("有有效保留时，非保留人借书被拒绝")
     void borrowBook_validReservation_otherUserDenied() {
         when(bookInfoService.queryBookInfoById(200)).thenReturn(reservedBook);
+        when(borrowService.getActiveBorrowCount(999)).thenReturn(0);
         when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(null);
         when(reservationService.getActiveReservation(200, 999)).thenReturn(null);
 
@@ -244,6 +259,7 @@ class ReservationFlowTest {
         expired.setExpirytime(new Date(System.currentTimeMillis() - 1000));
 
         when(bookInfoService.queryBookInfoById(200)).thenReturn(reservedBook);
+        when(borrowService.getActiveBorrowCount(100)).thenReturn(0);
         when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(expired);
         when(reservationService.getActiveReservation(200, 100)).thenReturn(expired);
         when(reservationService.expireAndAdvance(1)).thenReturn(null);
@@ -258,14 +274,15 @@ class ReservationFlowTest {
     @DisplayName("无预约且书可借时正常借书")
     void borrowBook_noReservation_normalBorrow() {
         when(bookInfoService.queryBookInfoById(200)).thenReturn(availableBook);
+        when(borrowService.getActiveBorrowCount(100)).thenReturn(0);
         when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(null);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
+        when(bookInfoService.casUpdateIsBorrowed(200, (byte) 0, (byte) 1)).thenReturn(1);
         when(borrowService.addBorrow2(any())).thenReturn(1);
 
         Integer result = reservationController.borrowBook(100, 200);
 
         assertEquals(1, result);
-        verify(bookInfoService).updateBookInfo(any());
+        verify(bookInfoService).casUpdateIsBorrowed(200, (byte) 0, (byte) 1);
         verify(borrowService).addBorrow2(any());
     }
 
@@ -273,14 +290,25 @@ class ReservationFlowTest {
     @DisplayName("书已借出且无预约时借书失败")
     void borrowBook_borrowedNoReservation_fails() {
         when(bookInfoService.queryBookInfoById(200)).thenReturn(borrowedBook);
-        // 第一次调用：查任意活跃保留 → 无
+        when(borrowService.getActiveBorrowCount(100)).thenReturn(0);
         when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(null);
-        // 第二次调用：查用户特定保留 → 无
         when(reservationService.getActiveReservation(200, 100)).thenReturn(null);
 
         Integer result = reservationController.borrowBook(100, 200);
 
         assertEquals(0, result);
+    }
+
+    @Test
+    @DisplayName("借书失败 - 读者借阅上限")
+    void borrowBook_readerLimitExceeded() {
+        when(bookInfoService.queryBookInfoById(200)).thenReturn(availableBook);
+        when(borrowService.getActiveBorrowCount(100)).thenReturn(5);
+
+        Integer result = reservationController.borrowBook(100, 200);
+
+        assertEquals(0, result);
+        verify(bookInfoService, never()).casUpdateIsBorrowed(anyInt(), anyByte(), anyByte());
     }
 
     // ========================= 6. 管理员队列操作 =========================
@@ -365,9 +393,9 @@ class ReservationFlowTest {
 
         when(bookInfoService.queryBookInfoById(200)).thenReturn(borrowedBook);
         when(borrowService.queryBorrowsById(1)).thenReturn(makeBorrow(1, 999, 200));
-        when(borrowService.updateBorrow2(any())).thenReturn(1);
+        when(borrowService.returnBorrowCas(1)).thenReturn(1);
         when(reservationService.triggerReservation(200)).thenReturn(triggered);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
+        when(bookInfoService.casUpdateIsBorrowed(200, (byte) 1, (byte) 2)).thenReturn(1);
 
         Integer result = reservationController.returnBook(1, 200);
 
@@ -382,10 +410,11 @@ class ReservationFlowTest {
         triggered.setExpirytime(new Date(System.currentTimeMillis() + 72 * 3600 * 1000));
 
         when(bookInfoService.queryBookInfoById(200)).thenReturn(reservedBook);
+        when(borrowService.getActiveBorrowCount(100)).thenReturn(0);
         when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(triggered);
         when(reservationService.getActiveReservation(200, 100)).thenReturn(triggered);
         when(reservationService.consumeReservation(1)).thenReturn(1);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
+        when(bookInfoService.casUpdateIsBorrowed(200, (byte) 2, (byte) 1)).thenReturn(1);
         when(borrowService.addBorrow2(any())).thenReturn(1);
 
         Integer result = reservationController.borrowBook(100, 200);
@@ -405,11 +434,11 @@ class ReservationFlowTest {
         next.setExpirytime(new Date(System.currentTimeMillis() + 72 * 3600 * 1000));
 
         when(bookInfoService.queryBookInfoById(200)).thenReturn(availableBook);
+        when(borrowService.getActiveBorrowCount(999)).thenReturn(0);
         when(reservationService.getActiveReservation(eq(200), isNull()))
                 .thenReturn(expired, next);
         when(reservationService.expireAndAdvance(1)).thenReturn(next);
 
-        // 非保留人(999)尝试借书 → 过期顺延 → 下一位(101)持有保留 → 999不是保留人 → 拒绝
         Integer result = reservationController.borrowBook(999, 200);
 
         assertEquals(0, result);
@@ -423,10 +452,11 @@ class ReservationFlowTest {
         triggered2.setExpirytime(new Date(System.currentTimeMillis() + 72 * 3600 * 1000));
 
         when(bookInfoService.queryBookInfoById(200)).thenReturn(reservedBook);
+        when(borrowService.getActiveBorrowCount(101)).thenReturn(0);
         when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(triggered2);
         when(reservationService.getActiveReservation(200, 101)).thenReturn(triggered2);
         when(reservationService.consumeReservation(2)).thenReturn(1);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
+        when(bookInfoService.casUpdateIsBorrowed(200, (byte) 2, (byte) 1)).thenReturn(1);
         when(borrowService.addBorrow2(any())).thenReturn(1);
 
         Integer result = reservationController.borrowBook(101, 200);

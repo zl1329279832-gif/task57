@@ -30,4 +30,16 @@ public interface BorrowMapper {
     Integer selectCountByReader(Integer userid);
 
     List<Borrow> selectAllByLimitByReader(@Param("begin") Integer begin, @Param("size") Integer size, @Param("userid") Integer userid);
+
+    /**
+     * CAS归还：仅当returnTime为NULL时才设置归还时间
+     * @return 受影响行数，0表示已经归还过（幂等保护）
+     */
+    int updateReturnTimeCas(@Param("borrowid") Integer borrowid,
+                            @Param("returntime") java.util.Date returntime);
+
+    /**
+     * 查询用户当前未归还的借阅数量（用于借阅上限判断）
+     */
+    int selectActiveBorrowCount(@Param("userid") Integer userid);
 }

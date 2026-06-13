@@ -11,6 +11,7 @@ import com.wangpeng.bms.utils.MyUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -23,6 +24,9 @@ import java.util.Map;
 @RestController
 @RequestMapping(value = "/borrow")
 public class BorrowController {
+
+    /** 每位读者最多同时借阅数量 */
+    private static final int MAX_BORROW_LIMIT = 5;
 
     @Autowired
     BorrowService borrowService;
@@ -76,18 +80,23 @@ public class BorrowController {
             // 查询该书的情况
             BookInfo theBook = bookInfoService.queryBookInfoById(bookid);
 
-            if(theBook == null) {  // 图书不存在
+            if(theBook == null) {
                 throw new NullPointerException("图书" + bookid + "不存在");
-            } else if(theBook.getIsborrowed() == 1) {  // 已经被借
+            } else if(theBook.getIsborrowed() != 0) {
                 throw new NotEnoughException("图书" + bookid + "库存不足（已经被借走）");
             }
 
-            // 更新图书表的isBorrowed
-            BookInfo bookInfo = new BookInfo();
-            bookInfo.setBookid(bookid);
-            bookInfo.setIsborrowed((byte) 1);
-            Integer res2 = bookInfoService.updateBookInfo(bookInfo);
-            if(res2 == 0) throw new OperationFailureException("图书" + bookid + "更新被借信息失败");
+            // 检查读者借阅上限
+            int activeCount = borrowService.getActiveBorrowCount(userid);
+            if (activeCount >= MAX_BORROW_LIMIT) {
+                throw new NotEnoughException("您当前借阅数量已达上限（" + MAX_BORROW_LIMIT + "本）");
+            }
+
+            // CAS更新图书状态：仅当isBorrowed==0时才设为1（原子操作，防止并发双借）
+            int casResult = bookInfoService.casUpdateIsBorrowed(bookid, (byte) 0, (byte) 1);
+            if(casResult == 0) {
+                throw new NotEnoughException("图书" + bookid + "库存不足（已被其他读者借走）");
+            }
 
             // 添加一条记录到borrow表
             Borrow borrow = new Borrow();
@@ -99,7 +108,9 @@ public class BorrowController {
 
         } catch (Exception e) {
             System.out.println("发生异常，进行手动回滚");
-            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            }
             e.printStackTrace();
             return 0;
         }
@@ -113,34 +124,54 @@ public class BorrowController {
         try {
             // 查询该书的情况
             BookInfo theBook = bookInfoService.queryBookInfoById(bookid);
-            // 查询借书的情况
-            Borrow theBorrow = borrowService.queryBorrowsById(borrowid);
-
-            if(theBook == null) {  // 图书不存在
+            if(theBook == null) {
                 throw new NullPointerException("图书" + bookid + "不存在");
-            } else if(theBorrow == null) {   //结束记录不存在
-                throw new NullPointerException("借书记录" + bookid + "不存在");
-            } else if(theBorrow.getReturntime() != null) {  // 已经还过书
-                throw new NotEnoughException("图书" + bookid + "已经还过了");
             }
 
-            // 更新图书表的isBorrowed
-            BookInfo bookInfo = new BookInfo();
-            bookInfo.setBookid(bookid);
-            bookInfo.setIsborrowed((byte) 0);
-            Integer res2 = bookInfoService.updateBookInfo(bookInfo);
-            if(res2 == 0) throw new OperationFailureException("图书" + bookid + "更新被借信息失败");
+            // 查询借书的情况
+            Borrow theBorrow = borrowService.queryBorrowsById(borrowid);
+            if(theBorrow == null) {
+                throw new NullPointerException("借书记录" + borrowid + "不存在");
+            }
 
-            // 更新Borrow表，更新结束时间
-            Borrow borrow = new Borrow();
-            borrow.setBorrowid(borrowid);
-            borrow.setReturntime(new Date(System.currentTimeMillis()));
-            Integer res1 = borrowService.updateBorrow2(borrow);
-            if(res1 == 0) throw new OperationFailureException("图书" + bookid + "更新借阅记录失败");
+            // CAS归还：仅当returnTime为NULL时才设置归还时间（幂等保护）
+            int casResult = borrowService.returnBorrowCas(borrowid);
+            if(casResult == 0) {
+                // 已经还过了，幂等返回成功
+                return 1;
+            }
+
+            // CAS归还成功，更新图书表的isBorrowed（从1→0）
+            int bookCas = bookInfoService.casUpdateIsBorrowed(bookid, (byte) 1, (byte) 0);
+            if(bookCas == 0) {
+                throw new OperationFailureException("图书" + bookid + "更新库存状态失败");
+            }
 
         } catch (Exception e) {
             System.out.println("发生异常，进行手动回滚");
-            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            }
+            e.printStackTrace();
+            return 0;
+        }
+        return 1;
+    }
+
+    // 续借
+    @RequestMapping(value = {"/renewBook", "/reader/renewBook"})
+    @Transactional
+    public Integer renewBook(Integer borrowid){
+        try {
+            int result = borrowService.renewBorrow(borrowid);
+            if(result == 0) {
+                throw new OperationFailureException("续借失败，记录不存在或已归还");
+            }
+        } catch (Exception e) {
+            System.out.println("发生异常，进行手动回滚");
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            }
             e.printStackTrace();
             return 0;
         }

@@ -25,4 +25,21 @@ public interface BorrowService {
     Integer updateBorrow2(Borrow borrow);
 
     Borrow queryBorrowsById(Integer borrowid);
+
+    /**
+     * CAS归还：仅当未归还时才设置归还时间（幂等）
+     * @return 受影响行数，0表示已归还
+     */
+    int returnBorrowCas(Integer borrowid);
+
+    /**
+     * 查询用户当前未归还的借阅数量
+     */
+    int getActiveBorrowCount(Integer userid);
+
+    /**
+     * 续借：重置借阅时间（仅限未归还的记录）
+     * @return 1成功，0失败
+     */
+    int renewBorrow(Integer borrowid);
 }
