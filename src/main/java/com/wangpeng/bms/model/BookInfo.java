@@ -19,6 +19,10 @@ public class BookInfo {
 
     private Byte isborrowed;
 
+    private Integer stock;
+
+    private Integer availablestock;
+
     private String bookimg;
 
     public Integer getBookid() {
@@ -83,6 +87,22 @@ public class BookInfo {
 
     public void setIsborrowed(Byte isborrowed) {
         this.isborrowed = isborrowed;
+    }
+
+    public Integer getStock() {
+        return stock;
+    }
+
+    public void setStock(Integer stock) {
+        this.stock = stock;
+    }
+
+    public Integer getAvailablestock() {
+        return availablestock;
+    }
+
+    public void setAvailablestock(Integer availablestock) {
+        this.availablestock = availablestock;
     }
 
     public String getBookimg() {

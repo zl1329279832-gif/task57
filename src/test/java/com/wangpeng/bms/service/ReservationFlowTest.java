@@ -28,10 +28,9 @@ import static org.mockito.Mockito.*;
  * 覆盖场景：
  * 1. 无库存预约
  * 2. 重复预约拒绝
- * 3. 还书触发保留
- * 4. 保留过期自动顺延
- * 5. 借书识别保留名额
- * 6. 管理员队列操作（查看、取消、调整位置）
+ * 3. 还书触发保留（委托给 BorrowService）
+ * 4. 借书识别保留名额（委托给 BorrowService）
+ * 5. 管理员队列操作（查看、取消、调整位置）
  */
 @ExtendWith(MockitoExtension.class)
 class ReservationFlowTest {
@@ -123,167 +122,75 @@ class ReservationFlowTest {
         assertTrue(result.get("message").toString().contains("不可重复预约"));
     }
 
-    // ========================= 3. 还书触发保留 =========================
+    // ========================= 3. 还书（委托给 BorrowService） =========================
 
     @Test
-    @DisplayName("还书时有排队者，触发保留（isBorrowed=2）")
-    void returnBook_withWaitingQueue_triggersReservation() {
-        Reservation triggered = makeReservation(1, 100, 200, Reservation.STATUS_RESERVED, 1);
-        triggered.setExpirytime(new Date(System.currentTimeMillis() + 72 * 3600 * 1000));
-
-        when(bookInfoService.queryBookInfoById(200)).thenReturn(borrowedBook);
-        when(borrowService.queryBorrowsById(1)).thenReturn(makeBorrow(1, 100, 200));
-        when(borrowService.updateBorrow2(any())).thenReturn(1);
-        when(reservationService.triggerReservation(200)).thenReturn(triggered);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
+    @DisplayName("还书成功 - 委托给 BorrowService.returnBook")
+    void returnBook_success_delegatesToService() {
+        when(borrowService.returnBook(1, 200)).thenReturn(1);
 
         Integer result = reservationController.returnBook(1, 200);
 
         assertEquals(1, result);
-        verify(reservationService).triggerReservation(200);
+        verify(borrowService).returnBook(1, 200);
     }
 
     @Test
-    @DisplayName("还书时无排队者，正常归还（isBorrowed=0）")
-    void returnBook_noQueue_normalReturn() {
-        when(bookInfoService.queryBookInfoById(200)).thenReturn(borrowedBook);
-        when(borrowService.queryBorrowsById(1)).thenReturn(makeBorrow(1, 100, 200));
-        when(borrowService.updateBorrow2(any())).thenReturn(1);
-        when(reservationService.triggerReservation(200)).thenReturn(null);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
+    @DisplayName("重复还书 - BorrowService 返回 0（幂等）")
+    void returnBook_duplicate_delegatesToService() {
+        when(borrowService.returnBook(1, 200)).thenReturn(0);
 
         Integer result = reservationController.returnBook(1, 200);
 
-        assertEquals(1, result);
-    }
-
-    // ========================= 4. 过期顺延 =========================
-
-    @Test
-    @DisplayName("保留过期后借书，自动顺延到下一位")
-    void expiredReservation_autoAdvanceOnBorrow() {
-        Reservation expired = makeReservation(1, 100, 200, Reservation.STATUS_RESERVED, 1);
-        expired.setExpirytime(new Date(System.currentTimeMillis() - 1000));
-
-        Reservation next = makeReservation(2, 101, 200, Reservation.STATUS_RESERVED, 2);
-        next.setExpirytime(new Date(System.currentTimeMillis() + 72 * 3600 * 1000));
-
-        when(bookInfoService.queryBookInfoById(200)).thenReturn(availableBook);
-        // 链式返回：第一次调用返回 expired，第二次（顺延后）返回 next
-        when(reservationService.getActiveReservation(eq(200), isNull()))
-                .thenReturn(expired, next);
-        when(reservationService.expireAndAdvance(1)).thenReturn(next);
-
-        // 非保留人(999)尝试借书 → 被拒绝
-        Integer result = reservationController.borrowBook(999, 200);
-
-        assertEquals(0, result);
-        verify(reservationService).expireAndAdvance(1);
-    }
-
-    @Test
-    @DisplayName("过期顺延级联：第一位过期后无下一个人，书变为可借")
-    void expiredCascade_secondInLineGetsReservation() {
-        Reservation res1Expired = makeReservation(1, 100, 200, Reservation.STATUS_RESERVED, 1);
-        res1Expired.setExpirytime(new Date(System.currentTimeMillis() - 1000));
-
-        // 书可借（刚还回），但保留记录过期
-        when(bookInfoService.queryBookInfoById(200)).thenReturn(availableBook);
-        // 第一次调用返回过期保留，第二次（顺延后）返回 null
-        when(reservationService.getActiveReservation(eq(200), isNull()))
-                .thenReturn(res1Expired, (Reservation) null);
-        when(reservationService.expireAndAdvance(1)).thenReturn(null);
-
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
-        when(borrowService.addBorrow2(any())).thenReturn(1);
-
-        // 非保留人(999)借书 → res1 过期 → 顺延（无人） → 书可借 → 999 借走
-        Integer result = reservationController.borrowBook(999, 200);
-
-        assertEquals(1, result);
-        verify(reservationService).expireAndAdvance(1);
-    }
-
-    // ========================= 5. 借书识别保留名额 =========================
-
-    @Test
-    @DisplayName("有有效保留时，只有保留人可以借书")
-    void borrowBook_validReservation_onlyHolderCanBorrow() {
-        Reservation reservation = makeReservation(1, 100, 200, Reservation.STATUS_RESERVED, 1);
-        reservation.setExpirytime(new Date(System.currentTimeMillis() + 72 * 3600 * 1000));
-
-        when(bookInfoService.queryBookInfoById(200)).thenReturn(reservedBook);
-        when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(reservation);
-        when(reservationService.getActiveReservation(200, 100)).thenReturn(reservation);
-        when(reservationService.consumeReservation(1)).thenReturn(1);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
-        when(borrowService.addBorrow2(any())).thenReturn(1);
-
-        Integer result = reservationController.borrowBook(100, 200);
-
-        assertEquals(1, result);
-        verify(reservationService).consumeReservation(1);
-    }
-
-    @Test
-    @DisplayName("有有效保留时，非保留人借书被拒绝")
-    void borrowBook_validReservation_otherUserDenied() {
-        when(bookInfoService.queryBookInfoById(200)).thenReturn(reservedBook);
-        when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(null);
-        when(reservationService.getActiveReservation(200, 999)).thenReturn(null);
-
-        Integer result = reservationController.borrowBook(999, 200);
-
         assertEquals(0, result);
     }
 
     @Test
-    @DisplayName("保留过期时借书，触发顺延并拒绝当前请求")
-    void borrowBook_expiredReservation_expireAndDeny() {
-        Reservation expired = makeReservation(1, 100, 200, Reservation.STATUS_RESERVED, 1);
-        expired.setExpirytime(new Date(System.currentTimeMillis() - 1000));
+    @DisplayName("还书异常 - BorrowService 抛异常，Controller 返回 0")
+    void returnBook_exception_returnsZero() {
+        when(borrowService.returnBook(1, 200))
+                .thenThrow(new RuntimeException("图书不存在"));
 
-        when(bookInfoService.queryBookInfoById(200)).thenReturn(reservedBook);
-        when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(expired);
-        when(reservationService.getActiveReservation(200, 100)).thenReturn(expired);
-        when(reservationService.expireAndAdvance(1)).thenReturn(null);
-
-        Integer result = reservationController.borrowBook(100, 200);
+        Integer result = reservationController.returnBook(1, 200);
 
         assertEquals(0, result);
-        verify(reservationService).expireAndAdvance(1);
     }
 
+    // ========================= 4. 借书（委托给 BorrowService） =========================
+
     @Test
-    @DisplayName("无预约且书可借时正常借书")
-    void borrowBook_noReservation_normalBorrow() {
-        when(bookInfoService.queryBookInfoById(200)).thenReturn(availableBook);
-        when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(null);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
-        when(borrowService.addBorrow2(any())).thenReturn(1);
+    @DisplayName("借书成功 - 委托给 BorrowService.borrowBook")
+    void borrowBook_success_delegatesToService() {
+        when(borrowService.borrowBook(100, 200)).thenReturn(1);
 
         Integer result = reservationController.borrowBook(100, 200);
 
         assertEquals(1, result);
-        verify(bookInfoService).updateBookInfo(any());
-        verify(borrowService).addBorrow2(any());
+        verify(borrowService).borrowBook(100, 200);
     }
 
     @Test
-    @DisplayName("书已借出且无预约时借书失败")
-    void borrowBook_borrowedNoReservation_fails() {
-        when(bookInfoService.queryBookInfoById(200)).thenReturn(borrowedBook);
-        // 第一次调用：查任意活跃保留 → 无
-        when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(null);
-        // 第二次调用：查用户特定保留 → 无
-        when(reservationService.getActiveReservation(200, 100)).thenReturn(null);
+    @DisplayName("借书失败 - BorrowService 抛异常，Controller 返回 0")
+    void borrowBook_exception_returnsZero() {
+        when(borrowService.borrowBook(100, 200))
+                .thenThrow(new RuntimeException("库存不足"));
 
         Integer result = reservationController.borrowBook(100, 200);
 
         assertEquals(0, result);
     }
 
-    // ========================= 6. 管理员队列操作 =========================
+    @Test
+    @DisplayName("书已借出且无预约 - BorrowService 返回 0")
+    void borrowBook_borrowedNoReservation_returnsZero() {
+        when(borrowService.borrowBook(100, 200)).thenReturn(0);
+
+        Integer result = reservationController.borrowBook(100, 200);
+
+        assertEquals(0, result);
+    }
+
+    // ========================= 5. 管理员队列操作 =========================
 
     @Test
     @DisplayName("管理员查看预约队列")
@@ -342,7 +249,7 @@ class ReservationFlowTest {
         assertEquals(0, result.get("status"));
     }
 
-    // ========================= 7. 完整流程 =========================
+    // ========================= 6. 完整流程 =========================
 
     @Test
     @DisplayName("完整流程 - 预约阶段：无库存时创建预约")
@@ -358,81 +265,45 @@ class ReservationFlowTest {
     }
 
     @Test
-    @DisplayName("完整流程 - 还书阶段：还书触发保留")
-    void fullFlow_phase2_returnTriggersHold() {
-        Reservation triggered = makeReservation(1, 100, 200, Reservation.STATUS_RESERVED, 1);
-        triggered.setExpirytime(new Date(System.currentTimeMillis() + 72 * 3600 * 1000));
-
-        when(bookInfoService.queryBookInfoById(200)).thenReturn(borrowedBook);
-        when(borrowService.queryBorrowsById(1)).thenReturn(makeBorrow(1, 999, 200));
-        when(borrowService.updateBorrow2(any())).thenReturn(1);
-        when(reservationService.triggerReservation(200)).thenReturn(triggered);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
+    @DisplayName("完整流程 - 还书阶段：委托给 BorrowService")
+    void fullFlow_phase2_returnDelegates() {
+        when(borrowService.returnBook(1, 200)).thenReturn(1);
 
         Integer result = reservationController.returnBook(1, 200);
 
         assertEquals(1, result);
-        verify(reservationService).triggerReservation(200);
+        verify(borrowService).returnBook(1, 200);
     }
 
     @Test
-    @DisplayName("完整流程 - 借书阶段：保留人消费保留后借书")
-    void fullFlow_phase3_consumeHoldAndBorrow() {
-        Reservation triggered = makeReservation(1, 100, 200, Reservation.STATUS_RESERVED, 1);
-        triggered.setExpirytime(new Date(System.currentTimeMillis() + 72 * 3600 * 1000));
-
-        when(bookInfoService.queryBookInfoById(200)).thenReturn(reservedBook);
-        when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(triggered);
-        when(reservationService.getActiveReservation(200, 100)).thenReturn(triggered);
-        when(reservationService.consumeReservation(1)).thenReturn(1);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
-        when(borrowService.addBorrow2(any())).thenReturn(1);
+    @DisplayName("完整流程 - 借书阶段：委托给 BorrowService")
+    void fullFlow_phase3_borrowDelegates() {
+        when(borrowService.borrowBook(100, 200)).thenReturn(1);
 
         Integer result = reservationController.borrowBook(100, 200);
 
         assertEquals(1, result);
-        verify(reservationService).consumeReservation(1);
-        verify(borrowService).addBorrow2(any());
+        verify(borrowService).borrowBook(100, 200);
     }
 
     @Test
-    @DisplayName("完整流程 - 过期阶段：保留过期后顺延")
-    void fullFlow_phase4_expiredAdvance() {
-        Reservation expired = makeReservation(1, 100, 200, Reservation.STATUS_RESERVED, 1);
-        expired.setExpirytime(new Date(System.currentTimeMillis() - 1000));
+    @DisplayName("完整流程 - 借书失败：BorrowService 返回 0")
+    void fullFlow_phase4_borrowFails() {
+        when(borrowService.borrowBook(999, 200)).thenReturn(0);
 
-        Reservation next = makeReservation(2, 101, 200, Reservation.STATUS_RESERVED, 2);
-        next.setExpirytime(new Date(System.currentTimeMillis() + 72 * 3600 * 1000));
-
-        when(bookInfoService.queryBookInfoById(200)).thenReturn(availableBook);
-        when(reservationService.getActiveReservation(eq(200), isNull()))
-                .thenReturn(expired, next);
-        when(reservationService.expireAndAdvance(1)).thenReturn(next);
-
-        // 非保留人(999)尝试借书 → 过期顺延 → 下一位(101)持有保留 → 999不是保留人 → 拒绝
         Integer result = reservationController.borrowBook(999, 200);
 
         assertEquals(0, result);
-        verify(reservationService).expireAndAdvance(1);
     }
 
     @Test
-    @DisplayName("完整流程 - 顺延后借书：第二位保留人成功借书")
-    void fullFlow_phase5_secondHolderBorrows() {
-        Reservation triggered2 = makeReservation(2, 101, 200, Reservation.STATUS_RESERVED, 2);
-        triggered2.setExpirytime(new Date(System.currentTimeMillis() + 72 * 3600 * 1000));
+    @DisplayName("完整流程 - 重复还书幂等：BorrowService 返回 0")
+    void fullFlow_phase5_duplicateReturn() {
+        when(borrowService.returnBook(1, 200)).thenReturn(0);
 
-        when(bookInfoService.queryBookInfoById(200)).thenReturn(reservedBook);
-        when(reservationService.getActiveReservation(eq(200), isNull())).thenReturn(triggered2);
-        when(reservationService.getActiveReservation(200, 101)).thenReturn(triggered2);
-        when(reservationService.consumeReservation(2)).thenReturn(1);
-        when(bookInfoService.updateBookInfo(any())).thenReturn(1);
-        when(borrowService.addBorrow2(any())).thenReturn(1);
+        Integer result = reservationController.returnBook(1, 200);
 
-        Integer result = reservationController.borrowBook(101, 200);
-
-        assertEquals(1, result);
-        verify(reservationService).consumeReservation(2);
+        assertEquals(0, result);
     }
 
     // ========================= 辅助方法 =========================

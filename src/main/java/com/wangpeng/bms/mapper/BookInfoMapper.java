@@ -32,4 +32,10 @@ public interface BookInfoMapper {
     int selectCountByType(Map<String, Object> map);
 
     List<BookInfo> selectByType(Map<String, Object> map);
+
+    BookInfo selectForUpdate(Integer bookid);
+
+    int decrementAvailableStock(Integer bookid);
+
+    int incrementAvailableStock(Integer bookid);
 }

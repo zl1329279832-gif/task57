@@ -3,6 +3,7 @@ package com.wangpeng.bms.mapper;
 import com.wangpeng.bms.model.Borrow;
 import org.apache.ibatis.annotations.Param;
 
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
@@ -30,4 +31,10 @@ public interface BorrowMapper {
     Integer selectCountByReader(Integer userid);
 
     List<Borrow> selectAllByLimitByReader(@Param("begin") Integer begin, @Param("size") Integer size, @Param("userid") Integer userid);
+
+    Borrow selectForUpdate(Integer borrowid);
+
+    int updateReturnTimeIfActive(@Param("borrowid") Integer borrowid, @Param("returntime") Date returntime);
+
+    int countActiveBorrowsByReader(Integer userid);
 }

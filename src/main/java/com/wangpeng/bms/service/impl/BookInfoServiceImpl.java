@@ -70,4 +70,19 @@ public class BookInfoServiceImpl implements BookInfoService {
         return bookInfoMapper.updateByPrimaryKeySelective(bookInfo);
     }
 
+    @Override
+    public BookInfo queryBookInfoForUpdate(Integer bookid) {
+        return bookInfoMapper.selectForUpdate(bookid);
+    }
+
+    @Override
+    public Integer decrementAvailableStock(Integer bookid) {
+        return bookInfoMapper.decrementAvailableStock(bookid);
+    }
+
+    @Override
+    public Integer incrementAvailableStock(Integer bookid) {
+        return bookInfoMapper.incrementAvailableStock(bookid);
+    }
+
 }

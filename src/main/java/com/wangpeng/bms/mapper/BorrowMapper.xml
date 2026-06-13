@@ -9,9 +9,10 @@
     <result column="bookName" jdbcType="INTEGER" property="bookname" />
     <result column="borrowTime" jdbcType="TIMESTAMP" property="borrowtime" />
     <result column="returnTime" jdbcType="TIMESTAMP" property="returntime" />
+    <result column="status" jdbcType="TINYINT" property="status" />
   </resultMap>
   <sql id="Base_Column_List">
-    borrowId, userId, bookId, borrowTime, returnTime
+    borrowId, userId, bookId, borrowTime, returnTime, status
   </sql>
   <select id="selectByPrimaryKey" parameterType="java.lang.Integer" resultMap="BaseResultMap">
     select 
@@ -47,6 +48,9 @@
       <if test="returntime != null">
         returnTime,
       </if>
+      <if test="status != null">
+        status,
+      </if>
     </trim>
     <trim prefix="values (" suffix=")" suffixOverrides=",">
       <if test="borrowid != null">
@@ -64,6 +68,9 @@
       <if test="returntime != null">
         #{returntime,jdbcType=TIMESTAMP},
       </if>
+      <if test="status != null">
+        #{status,jdbcType=TINYINT},
+      </if>
     </trim>
   </insert>
   <update id="updateByPrimaryKeySelective" parameterType="com.wangpeng.bms.model.Borrow">
@@ -80,6 +87,9 @@
       </if>
       <if test="returntime != null">
         returnTime = #{returntime,jdbcType=TIMESTAMP},
+      </if>
+      <if test="status != null">
+        status = #{status,jdbcType=TINYINT},
       </if>
     </set>
     where borrowId = #{borrowid,jdbcType=INTEGER}
@@ -142,5 +152,21 @@
     from borrow
     where userId = #{userid}
     limit #{begin}, #{size}
+  </select>
+  <select id="selectForUpdate" parameterType="java.lang.Integer" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from borrow
+    where borrowId = #{borrowid,jdbcType=INTEGER}
+    for update
+  </select>
+  <update id="updateReturnTimeIfActive">
+    update borrow
+    set returnTime = #{returntime,jdbcType=TIMESTAMP}, status = 1
+    where borrowId = #{borrowid,jdbcType=INTEGER} and status = 0 and returnTime is null
+  </update>
+  <select id="countActiveBorrowsByReader" parameterType="java.lang.Integer" resultType="int">
+    select count(*) from borrow
+    where userId = #{userid,jdbcType=INTEGER} and status = 0
   </select>
 </mapper>

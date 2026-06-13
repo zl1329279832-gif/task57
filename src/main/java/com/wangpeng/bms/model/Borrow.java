@@ -4,6 +4,10 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 
 public class Borrow {
+    public static final byte STATUS_ACTIVE = 0;
+    public static final byte STATUS_RETURNED = 1;
+    public static final byte STATUS_RENEWED = 2;
+
     private Integer borrowid;
 
     private Integer userid;
@@ -21,6 +25,8 @@ public class Borrow {
     private Date returntime;
 
     private String returntimestr;
+
+    private Byte status;
 
     public Integer getBorrowid() {
         return borrowid;
@@ -92,5 +98,13 @@ public class Borrow {
 
     public void setReturntimestr(String returntimestr) {
         this.returntimestr = returntimestr;
+    }
+
+    public Byte getStatus() {
+        return status;
+    }
+
+    public void setStatus(Byte status) {
+        this.status = status;
     }
 }

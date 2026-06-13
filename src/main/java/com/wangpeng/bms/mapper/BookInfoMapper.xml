@@ -10,10 +10,12 @@
     <result column="bookTypeName" jdbcType="INTEGER" property="booktypename" />
     <result column="bookDesc" jdbcType="VARCHAR" property="bookdesc" />
     <result column="isBorrowed" jdbcType="TINYINT" property="isborrowed" />
+    <result column="stock" jdbcType="INTEGER" property="stock" />
+    <result column="availableStock" jdbcType="INTEGER" property="availablestock" />
     <result column="bookImg" jdbcType="TINYINT" property="bookimg" />
   </resultMap>
   <sql id="Base_Column_List">
-    bookId, bookName, bookAuthor, bookPrice, bookTypeId, bookDesc, isBorrowed, bookImg
+    bookId, bookName, bookAuthor, bookPrice, bookTypeId, bookDesc, isBorrowed, stock, availableStock, bookImg
   </sql>
   <select id="selectByPrimaryKey" parameterType="java.lang.Integer" resultMap="BaseResultMap">
     select 
@@ -57,6 +59,12 @@
       <if test="isborrowed != null">
         isBorrowed,
       </if>
+      <if test="stock != null">
+        stock,
+      </if>
+      <if test="availablestock != null">
+        availableStock,
+      </if>
       <if test="bookimg != null">
         bookImg,
       </if>
@@ -83,6 +91,12 @@
       <if test="isborrowed != null">
         #{isborrowed,jdbcType=TINYINT},
       </if>
+      <if test="stock != null">
+        #{stock,jdbcType=INTEGER},
+      </if>
+      <if test="availablestock != null">
+        #{availablestock,jdbcType=INTEGER},
+      </if>
       <if test="bookimg != null">
         #{bookimg,jdbcType=TINYINT},
       </if>
@@ -108,6 +122,12 @@
       </if>
       <if test="isborrowed != null">
         isBorrowed = #{isborrowed,jdbcType=TINYINT},
+      </if>
+      <if test="stock != null">
+        stock = #{stock,jdbcType=INTEGER},
+      </if>
+      <if test="availablestock != null">
+        availableStock = #{availablestock,jdbcType=INTEGER},
       </if>
       <if test="bookimg != null">
         bookImg = #{bookimg,jdbcType=TINYINT},
@@ -190,5 +210,24 @@
     </where>
     limit #{begin}, #{size}
   </select>
+  <select id="selectForUpdate" parameterType="java.lang.Integer" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from book_info
+    where bookId = #{bookid,jdbcType=INTEGER}
+    for update
+  </select>
+  <update id="decrementAvailableStock" parameterType="java.lang.Integer">
+    update book_info
+    set availableStock = availableStock - 1,
+        isBorrowed = case when availableStock - 1 &lt;= 0 then 1 else 0 end
+    where bookId = #{bookid,jdbcType=INTEGER} and availableStock > 0
+  </update>
+  <update id="incrementAvailableStock" parameterType="java.lang.Integer">
+    update book_info
+    set availableStock = availableStock + 1,
+        isBorrowed = 0
+    where bookId = #{bookid,jdbcType=INTEGER} and availableStock &lt; stock
+  </update>
 </mapper>
 

@@ -23,4 +23,10 @@ public interface BookInfoService {
     Integer deleteBookInfos(List<BookInfo> bookInfos);
 
     Integer updateBookInfo(BookInfo bookInfo);
+
+    BookInfo queryBookInfoForUpdate(Integer bookid);
+
+    Integer decrementAvailableStock(Integer bookid);
+
+    Integer incrementAvailableStock(Integer bookid);
 }

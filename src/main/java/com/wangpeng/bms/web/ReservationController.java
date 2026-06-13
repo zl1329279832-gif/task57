@@ -1,24 +1,15 @@
 package com.wangpeng.bms.web;
 
-import com.wangpeng.bms.exception.NotEnoughException;
-import com.wangpeng.bms.exception.OperationFailureException;
 import com.wangpeng.bms.model.BookInfo;
-import com.wangpeng.bms.model.Borrow;
 import com.wangpeng.bms.model.Reservation;
 import com.wangpeng.bms.service.BookInfoService;
 import com.wangpeng.bms.service.BorrowService;
 import com.wangpeng.bms.service.ReservationService;
 import com.wangpeng.bms.utils.MyResult;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.interceptor.TransactionAspectSupport;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
@@ -111,143 +102,35 @@ public class ReservationController {
         return MyResult.getResultMap(1, "调整成功");
     }
 
-    // ==================== 增强版借书（带保留名额检查） ====================
+    // ==================== 增强版借书（委托给 BorrowService） ====================
 
     /**
      * 借书（增强版，支持预约保留检查）
-     * 替代 /borrow/borrowBook，识别保留名额
+     * 事务保护、幂等、并发安全逻辑在 BorrowService.borrowBook 中
      */
     @RequestMapping(value = {"/borrowBook", "/reader/borrowBook"})
-    @Transactional
     public Integer borrowBook(Integer userid, Integer bookid) {
         try {
-            // 查询图书状态
-            BookInfo theBook = bookInfoService.queryBookInfoById(bookid);
-            if (theBook == null) {
-                throw new NullPointerException("图书" + bookid + "不存在");
-            }
-
-            // 查询该书是否有活跃保留
-            Reservation activeReservation = reservationService.getActiveReservation(bookid, null);
-
-            if (theBook.getIsborrowed() == 0) {
-                // 书可借 —— 检查是否有 RESERVED 保留（书刚被还回但保留尚未领取）
-                if (activeReservation != null && activeReservation.getStatus() == Reservation.STATUS_RESERVED) {
-                    // 检查保留是否过期
-                    if (activeReservation.getExpirytime() != null
-                            && activeReservation.getExpirytime().before(new Date(System.currentTimeMillis()))) {
-                        // 保留已过期，顺延并重新检查
-                        reservationService.expireAndAdvance(activeReservation.getReservationid());
-                        activeReservation = reservationService.getActiveReservation(bookid, null);
-                    }
-                    // 再次检查：仍然有活跃保留
-                    if (activeReservation != null && activeReservation.getStatus() == Reservation.STATUS_RESERVED) {
-                        if (!activeReservation.getUserid().equals(userid)) {
-                            throw new NotEnoughException("该书已被保留给其他读者，您暂不可借");
-                        }
-                        // 就是保留人本人，消费保留
-                        reservationService.consumeReservation(activeReservation.getReservationid());
-                    }
-                }
-                // 无保留或保留已消费 → 正常借出
-            } else if (theBook.getIsborrowed() == 1 || theBook.getIsborrowed() == 2) {
-                // 书已被借 / 已保留
-                Reservation myReservation = reservationService.getActiveReservation(bookid, userid);
-                if (myReservation == null) {
-                    throw new NotEnoughException("图书" + bookid + "库存不足，且您没有该书的预约保留");
-                }
-                if (myReservation.getStatus() != Reservation.STATUS_RESERVED) {
-                    throw new NotEnoughException("图书" + bookid + "库存不足，您的预约尚未轮到您");
-                }
-                // 检查保留是否过期
-                if (myReservation.getExpirytime() != null
-                        && myReservation.getExpirytime().before(new Date(System.currentTimeMillis()))) {
-                    reservationService.expireAndAdvance(myReservation.getReservationid());
-                    throw new NotEnoughException("图书" + bookid + "保留已过期，已顺延给下一位");
-                }
-                // 有效保留，消费
-                reservationService.consumeReservation(myReservation.getReservationid());
-            }
-
-            // 更新图书 isBorrowed = 1
-            BookInfo bookInfo = new BookInfo();
-            bookInfo.setBookid(bookid);
-            bookInfo.setIsborrowed((byte) 1);
-            Integer res2 = bookInfoService.updateBookInfo(bookInfo);
-            if (res2 == 0) throw new OperationFailureException("图书" + bookid + "更新被借信息失败");
-
-            // 添加借阅记录
-            Borrow borrow = new Borrow();
-            borrow.setUserid(userid);
-            borrow.setBookid(bookid);
-            borrow.setBorrowtime(new Date(System.currentTimeMillis()));
-            Integer res1 = borrowService.addBorrow2(borrow);
-            if (res1 == 0) throw new OperationFailureException("图书" + bookid + "添加借阅记录失败");
-
+            return borrowService.borrowBook(userid, bookid);
         } catch (Exception e) {
-            System.out.println("发生异常，进行手动回滚");
-            if (TransactionSynchronizationManager.isActualTransactionActive()) {
-                TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
-            }
             e.printStackTrace();
             return 0;
         }
-        return 1;
     }
 
-    // ==================== 增强版还书（触发保留生成） ====================
+    // ==================== 增强版还书（委托给 BorrowService） ====================
 
     /**
      * 还书（增强版，触发预约保留）
-     * 替代 /borrow/returnBook，还书后自动检查预约队列
+     * 事务保护、幂等、并发安全逻辑在 BorrowService.returnBook 中
      */
     @RequestMapping(value = {"/returnBook", "/reader/returnBook"})
-    @Transactional
     public Integer returnBook(Integer borrowid, Integer bookid) {
         try {
-            BookInfo theBook = bookInfoService.queryBookInfoById(bookid);
-            Borrow theBorrow = borrowService.queryBorrowsById(borrowid);
-
-            if (theBook == null) {
-                throw new NullPointerException("图书" + bookid + "不存在");
-            } else if (theBorrow == null) {
-                throw new NullPointerException("借书记录" + borrowid + "不存在");
-            } else if (theBorrow.getReturntime() != null) {
-                throw new NotEnoughException("图书" + bookid + "已经还过了");
-            }
-
-            // 更新 Borrow 还书时间
-            Borrow borrow = new Borrow();
-            borrow.setBorrowid(borrowid);
-            borrow.setReturntime(new Date(System.currentTimeMillis()));
-            Integer res1 = borrowService.updateBorrow2(borrow);
-            if (res1 == 0) throw new OperationFailureException("图书" + bookid + "更新借阅记录失败");
-
-            // 检查预约队列
-            Reservation triggered = reservationService.triggerReservation(bookid);
-
-            if (triggered != null) {
-                // 有人排队 → 设为保留状态（isBorrowed=2），等待预约人来取
-                BookInfo bookInfo = new BookInfo();
-                bookInfo.setBookid(bookid);
-                bookInfo.setIsborrowed((byte) 2);
-                bookInfoService.updateBookInfo(bookInfo);
-            } else {
-                // 无人排队 → 正常归还
-                BookInfo bookInfo = new BookInfo();
-                bookInfo.setBookid(bookid);
-                bookInfo.setIsborrowed((byte) 0);
-                bookInfoService.updateBookInfo(bookInfo);
-            }
-
+            return borrowService.returnBook(borrowid, bookid);
         } catch (Exception e) {
-            System.out.println("发生异常，进行手动回滚");
-            if (TransactionSynchronizationManager.isActualTransactionActive()) {
-                TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
-            }
             e.printStackTrace();
             return 0;
         }
-        return 1;
     }
 }
