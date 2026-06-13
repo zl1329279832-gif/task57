@@ -154,4 +154,24 @@ INSERT INTO `user` VALUES (11, 'zhang', '123', 0);
 INSERT INTO `user` VALUES (13, 'zhao', 'abc', 1);
 INSERT INTO `user` VALUES (14, 'wangpeng', '123456', 0);
 
+-- ----------------------------
+-- Table structure for reservation
+-- ----------------------------
+DROP TABLE IF EXISTS `reservation`;
+CREATE TABLE `reservation`  (
+  `reservationId` int(11) NOT NULL AUTO_INCREMENT,
+  `userId` int(11) NOT NULL,
+  `bookId` int(11) NOT NULL,
+  `status` tinyint(4) NOT NULL DEFAULT 0 COMMENT '0-等待中，1-已保留，2-已完成，3-已取消，4-已过期',
+  `queuePosition` int(11) NOT NULL DEFAULT 0 COMMENT '队列位置',
+  `reserveTime` datetime NULL DEFAULT NULL COMMENT '保留开始时间',
+  `expiryTime` datetime NULL DEFAULT NULL COMMENT '保留过期时间',
+  `createTime` datetime NOT NULL COMMENT '预约创建时间',
+  PRIMARY KEY (`reservationId`) USING BTREE,
+  INDEX `fk_reservation_user`(`userId`) USING BTREE,
+  INDEX `fk_reservation_book`(`bookId`) USING BTREE,
+  CONSTRAINT `reservation_ibfk_1` FOREIGN KEY (`bookId`) REFERENCES `book_info` (`bookId`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT `reservation_ibfk_2` FOREIGN KEY (`userId`) REFERENCES `user` (`userId`) ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE = InnoDB AUTO_INCREMENT = 1 CHARACTER SET = utf8 COLLATE = utf8_general_ci ROW_FORMAT = Dynamic;
+
 SET FOREIGN_KEY_CHECKS = 1;

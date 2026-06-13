@@ -4,8 +4,10 @@ import com.wangpeng.bms.exception.NotEnoughException;
 import com.wangpeng.bms.exception.OperationFailureException;
 import com.wangpeng.bms.model.BookInfo;
 import com.wangpeng.bms.model.Borrow;
+import com.wangpeng.bms.model.Reservation;
 import com.wangpeng.bms.service.BookInfoService;
 import com.wangpeng.bms.service.BorrowService;
+import com.wangpeng.bms.service.ReservationService;
 import com.wangpeng.bms.utils.MyResult;
 import com.wangpeng.bms.utils.MyUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +30,8 @@ public class BorrowController {
     BorrowService borrowService;
     @Autowired
     BookInfoService bookInfoService;
+    @Autowired
+    ReservationService reservationService;
 
     // 分页查询借阅 params: {page, limit, userid, bookid}
     @RequestMapping(value = "/queryBorrowsByPage")
@@ -82,6 +86,15 @@ public class BorrowController {
                 throw new NotEnoughException("图书" + bookid + "库存不足（已经被借走）");
             }
 
+            // 检查是否有保留名额
+            Reservation active = reservationService.getActiveReservation(bookid);
+            if (active != null) {
+                active = reservationService.expireAndAdvance(bookid);
+                if (active != null && !active.getUserid().equals(userid)) {
+                    throw new NotEnoughException("图书" + bookid + "已被其他读者保留");
+                }
+            }
+
             // 更新图书表的isBorrowed
             BookInfo bookInfo = new BookInfo();
             bookInfo.setBookid(bookid);
@@ -96,6 +109,11 @@ public class BorrowController {
             borrow.setBorrowtime(new Date(System.currentTimeMillis()));
             Integer res1 = borrowService.addBorrow2(borrow);
             if(res1 == 0) throw new OperationFailureException("图书" + bookid + "添加借阅记录失败");
+
+            // 消费预约名额
+            if (active != null && active.getUserid().equals(userid)) {
+                reservationService.consumeReservation(active.getReservationid());
+            }
 
         } catch (Exception e) {
             System.out.println("发生异常，进行手动回滚");
@@ -137,6 +155,9 @@ public class BorrowController {
             borrow.setReturntime(new Date(System.currentTimeMillis()));
             Integer res1 = borrowService.updateBorrow2(borrow);
             if(res1 == 0) throw new OperationFailureException("图书" + bookid + "更新借阅记录失败");
+
+            // 还书后触发预约保留
+            reservationService.triggerReservation(bookid);
 
         } catch (Exception e) {
             System.out.println("发生异常，进行手动回滚");
