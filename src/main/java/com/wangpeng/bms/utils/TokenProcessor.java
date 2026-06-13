@@ -5,9 +5,8 @@ package com.wangpeng.bms.utils;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Base64;
 import java.util.Random;
-
-import sun.misc.BASE64Encoder;
 
 /**
  * 生成Token的工具类  
@@ -31,8 +30,7 @@ public class TokenProcessor {
         try {
             MessageDigest md = MessageDigest.getInstance("md5");
             byte md5[] =  md.digest(token.getBytes());
-            BASE64Encoder encoder = new BASE64Encoder();
-            return encoder.encode(md5);
+            return Base64.getEncoder().encodeToString(md5);
         } catch (NoSuchAlgorithmException e) {
             // TODO Auto-generated catch block  
             e.printStackTrace();

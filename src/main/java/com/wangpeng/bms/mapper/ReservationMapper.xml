@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.wangpeng.bms.mapper.ReservationMapper">
+
+  <resultMap id="BaseResultMap" type="com.wangpeng.bms.model.Reservation">
+    <id column="reservationId" jdbcType="INTEGER" property="reservationid" />
+    <result column="userId" jdbcType="INTEGER" property="userid" />
+    <result column="bookId" jdbcType="INTEGER" property="bookid" />
+    <result column="status" jdbcType="TINYINT" property="status" />
+    <result column="queuePosition" jdbcType="INTEGER" property="queueposition" />
+    <result column="reserveTime" jdbcType="TIMESTAMP" property="reservetime" />
+    <result column="expiryTime" jdbcType="TIMESTAMP" property="expirytime" />
+    <result column="createTime" jdbcType="TIMESTAMP" property="createtime" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    reservationId, userId, bookId, status, queuePosition, reserveTime, expiryTime, createTime
+  </sql>
+
+  <select id="selectByPrimaryKey" parameterType="java.lang.Integer" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from reservation
+    where reservationId = #{reservationid,jdbcType=INTEGER}
+  </select>
+
+  <insert id="insertSelective" parameterType="com.wangpeng.bms.model.Reservation"
+          useGeneratedKeys="true" keyProperty="reservationid">
+    insert into reservation
+    <trim prefix="(" suffix=")" suffixOverrides=",">
+      <if test="reservationid != null">reservationId,</if>
+      <if test="userid != null">userId,</if>
+      <if test="bookid != null">bookId,</if>
+      <if test="status != null">status,</if>
+      <if test="queueposition != null">queuePosition,</if>
+      <if test="reservetime != null">reserveTime,</if>
+      <if test="expirytime != null">expiryTime,</if>
+      <if test="createtime != null">createTime,</if>
+    </trim>
+    <trim prefix="values (" suffix=")" suffixOverrides=",">
+      <if test="reservationid != null">#{reservationid,jdbcType=INTEGER},</if>
+      <if test="userid != null">#{userid,jdbcType=INTEGER},</if>
+      <if test="bookid != null">#{bookid,jdbcType=INTEGER},</if>
+      <if test="status != null">#{status,jdbcType=TINYINT},</if>
+      <if test="queueposition != null">#{queueposition,jdbcType=INTEGER},</if>
+      <if test="reservetime != null">#{reservetime,jdbcType=TIMESTAMP},</if>
+      <if test="expirytime != null">#{expirytime,jdbcType=TIMESTAMP},</if>
+      <if test="createtime != null">#{createtime,jdbcType=TIMESTAMP},</if>
+    </trim>
+  </insert>
+
+  <update id="updateByPrimaryKeySelective" parameterType="com.wangpeng.bms.model.Reservation">
+    update reservation
+    <set>
+      <if test="userid != null">userId = #{userid,jdbcType=INTEGER},</if>
+      <if test="bookid != null">bookId = #{bookid,jdbcType=INTEGER},</if>
+      <if test="status != null">status = #{status,jdbcType=TINYINT},</if>
+      <if test="queueposition != null">queuePosition = #{queueposition,jdbcType=INTEGER},</if>
+      <if test="reservetime != null">reserveTime = #{reservetime,jdbcType=TIMESTAMP},</if>
+      <if test="expirytime != null">expiryTime = #{expirytime,jdbcType=TIMESTAMP},</if>
+      <if test="createtime != null">createTime = #{createtime,jdbcType=TIMESTAMP},</if>
+    </set>
+    where reservationId = #{reservationid,jdbcType=INTEGER}
+  </update>
+
+  <delete id="deleteByPrimaryKey" parameterType="java.lang.Integer">
+    delete from reservation
+    where reservationId = #{reservationid,jdbcType=INTEGER}
+  </delete>
+
+  <!-- 查询活跃预约：userid 为 null 时查任意用户，非 null 时查指定用户 -->
+  <select id="selectActiveByBookAndUser" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from reservation
+    where bookId = #{bookid} and status in (0, 1)
+    <if test="userid != null">
+      and userId = #{userid}
+    </if>
+    limit 1
+  </select>
+
+  <!-- 某本书所有 WAITING 预约，按队列位置升序 -->
+  <select id="selectWaitingByBook" resultMap="BaseResultMap">
+    select r.reservationId, r.userId, r.bookId, r.status, r.queuePosition,
+           r.reserveTime, r.expiryTime, r.createTime,
+           (select userName from user where user.userId = r.userId) as userName,
+           (select bookName from book_info where book_info.bookId = r.bookId) as bookName
+    from reservation r
+    where r.bookId = #{bookid} and r.status = 0
+    order by r.queuePosition asc
+  </select>
+
+  <!-- 某本书队列位置最小的 WAITING 预约 -->
+  <select id="selectNextWaiting" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from reservation
+    where bookId = #{bookid} and status = 0
+    order by queuePosition asc
+    limit 1
+  </select>
+
+  <!-- 某用户所有预约（含用户名和书名） -->
+  <select id="selectByUser" resultMap="BaseResultMap">
+    select r.reservationId, r.userId, r.bookId, r.status, r.queuePosition,
+           r.reserveTime, r.expiryTime, r.createTime,
+           (select userName from user where user.userId = r.userId) as userName,
+           (select bookName from book_info where book_info.bookId = r.bookId) as bookName
+    from reservation r
+    where r.userId = #{userid}
+    order by r.createTime desc
+  </select>
+
+  <!-- 某用户预约总数 -->
+  <select id="selectCountByUser" resultType="int">
+    select count(*) from reservation where userId = #{userid}
+  </select>
+
+  <!-- 某本书 WAITING 预约的最大队列位置 -->
+  <select id="getMaxQueuePosition" resultType="java.lang.Integer">
+    select max(queuePosition) from reservation
+    where bookId = #{bookid} and status = 0
+  </select>
+
+  <!-- 某本书 WAITING 预约数量 -->
+  <select id="selectWaitingCountByBook" resultType="int">
+    select count(*) from reservation
+    where bookId = #{bookid} and status = 0
+  </select>
+
+</mapper>
